@@ -71,7 +71,6 @@ module Network.Wai.Handler.Warp (
   , HostPreference (..)
   , Port
   , InvalidRequest (..)
-  , ConnSendFileOverride (..)
     -- * Connection
   , Connection (..)
   , socketConnection
