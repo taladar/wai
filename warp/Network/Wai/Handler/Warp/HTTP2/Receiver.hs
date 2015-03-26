@@ -44,12 +44,12 @@ frameReceiver ctx@Context{..} mkreq src =
         if BS.null hd then
             atomically $ writeTQueue outputQ ""
           else do
-            let (typ,header@FrameHeader{..}) = decodeFrameHeader hd
-            when (isResponse streamId) $ E.throwIO $ ConnectionError ProtocolError "stream id should be odd"
-            cont <- guardError typ header
+            cont <- guardError $ decodeFrameHeader hd
             when cont loop
 
-    guardError (FrameUnknown _) FrameHeader{..} = do
+    guardError (_, FrameHeader{..})
+      | isResponse streamId = E.throwIO $ ConnectionError ProtocolError "stream id should be odd"
+    guardError (FrameUnknown _, FrameHeader{..}) = do
         mx <- readIORef continued
         case mx of
             Nothing -> do
@@ -57,18 +57,18 @@ frameReceiver ctx@Context{..} mkreq src =
                 consume payloadLength
                 return True
             Just _  -> E.throwIO $ ConnectionError ProtocolError "stream id should be odd"
-    guardError FramePushPromise _ =
+    guardError (FramePushPromise, _) =
         E.throwIO $ ConnectionError ProtocolError "push promise is not allowed"
-    guardError ftyp header@FrameHeader{..} = do
+    guardError typhdr@(ftyp, header@FrameHeader{..}) = do
         settings <- readIORef http2settings
-        case checkFrameHeader settings ftyp header of
-            Just h2err -> case h2err of
+        case checkFrameHeader settings typhdr of
+            Left h2err -> case h2err of
                 StreamError err sid -> do
                     sendReset err sid
                     consume payloadLength
                     return True
                 connErr -> E.throwIO connErr
-            Nothing -> do
+            Right _ -> do
                 ex <- E.try $ controlOrStream ftyp header
                 case ex of
                     Left (StreamError err sid) -> do
@@ -178,7 +178,7 @@ frameReceiver ctx@Context{..} mkreq src =
 
 control :: FrameTypeId -> FrameHeader -> ByteString -> Context -> IO Bool
 control FrameSettings header@FrameHeader{..} bs Context{..} = do
-    let SettingsFrame alist = decodeSettingsFrame header bs
+    SettingsFrame alist <- guardIt $ decodeSettingsFrame header bs
     case checkSettingsList alist of
         Just x  -> E.throwIO x
         Nothing -> return ()
@@ -201,10 +201,8 @@ control FrameGoAway _ _ Context{..} = do
     return False
 
 control FrameWindowUpdate header@FrameHeader{..} bs Context{..} = do
-    let WindowUpdateFrame wsi = decodeWindowUpdateFrame header bs
+    WindowUpdateFrame _ <- guardIt $ decodeWindowUpdateFrame header bs
     -- fixme: valid case
-    when (wsi == 0) $
-        E.throwIO $ ConnectionError ProtocolError "window increment size must not be 0"
     return True
 
 control _ _ _ _ =
@@ -213,10 +211,15 @@ control _ _ _ _ =
 
 ----------------------------------------------------------------
 
+guardIt :: Either HTTP2Error a -> IO a
+guardIt x = case x of
+    Left err    -> E.throwIO err
+    Right frame -> return frame
+
 stream :: FrameTypeId -> FrameHeader -> ByteString -> Context -> StreamState -> Stream -> IO StreamState
 stream FrameHeaders header@FrameHeader{..} bs ctx Idle _ = do
-    let HeadersFrame _ frag = decodeHeadersFrame header bs
-        endOfStream = testEndStream flags
+    HeadersFrame _ frag <- guardIt $ decodeHeadersFrame header bs
+    let endOfStream = testEndStream flags
         endOfHeader = testEndHeader flags
     if endOfHeader then do
         hdr <- decodeHeaderBlock frag ctx
@@ -225,8 +228,8 @@ stream FrameHeaders header@FrameHeader{..} bs ctx Idle _ = do
         return $ Continued [frag] endOfStream
 
 stream FrameData header@FrameHeader{..} bs _ s@(Body q) Stream{..} = do
-    let DataFrame body = decodeDataFrame header bs
-        endOfStream = testEndStream flags
+    DataFrame body <- guardIt $ decodeDataFrame header bs
+    let endOfStream = testEndStream flags
     len0 <- readIORef streamBodyLength
     let !len = len0 + payloadLength
     writeIORef streamBodyLength len
@@ -254,10 +257,8 @@ stream FrameContinuation FrameHeader{..} frag ctx (Continued rfrags endOfStream)
 stream FrameContinuation _ _ _ _ _ = E.throwIO $ ConnectionError ProtocolError "continue frame cannot come here"
 
 stream FrameWindowUpdate header@FrameHeader{..} bs Context{..} s _ = do
-    let WindowUpdateFrame wsi = decodeWindowUpdateFrame header bs
+    WindowUpdateFrame _ <- guardIt $ decodeWindowUpdateFrame header bs
     -- fixme: valid case
-    when (wsi == 0) $
-        E.throwIO $ StreamError ProtocolError streamId
     return s
 
 -- this ordering is important
