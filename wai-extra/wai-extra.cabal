@@ -31,6 +31,12 @@ description:
   .
   Negotiate HTTP payload gzip compression.
   .
+  * Handle Reverse Proxy Headers
+  .
+  Handles Reverse Proxy Headers like X-Forwarded-For, X-Forwarded-Proto,...
+  and integrates their content (if the peer is a trusted reverse proxy) into
+  the corresponding Wai Request fields
+  .
   * HTTP Basic Authentication
   .
   WAI Basic Authentication Middleware which uses Authorization header.
@@ -134,6 +140,7 @@ Library
                      Network.Wai.Middleware.HttpAuth
                      Network.Wai.Middleware.StreamFile
                      Network.Wai.Middleware.ForceSSL
+                     Network.Wai.Middleware.HandleReverseProxyHeaders
                      Network.Wai.Parse
                      Network.Wai.Request
                      Network.Wai.UrlMap
@@ -152,6 +159,7 @@ test-suite spec
                      Network.Wai.RequestSpec
                      Network.Wai.Middleware.ApprootSpec
                      Network.Wai.Middleware.ForceSSLSpec
+                     Network.Wai.Middleware.HandleReverseProxyHeadersSpec
                      WaiExtraSpec
     build-depends:   base                      >= 4        && < 5
                    , wai-extra
@@ -168,6 +176,8 @@ test-suite spec
                    , blaze-builder
                    , cookie
                    , time
+                   , data-default-class
+                   , network
     ghc-options:     -Wall -Werror
 
 source-repository head
